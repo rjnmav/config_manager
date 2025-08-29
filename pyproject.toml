@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "configmanager"
+version = "1.0.0"
+description = "A fully thread-safe configuration manager for JSON and CFG files."
+readme = "README.md"
+authors = [
+    { name="Rajan Panchal", email="rajanp1743@gmail.com" }
+]
+maintainers = [
+  {name = "Rajan Panchal", email = "rajanp1743@gmail.com"}
+]
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+configmanager = ["LICENSE"]

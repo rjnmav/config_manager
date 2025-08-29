@@ -1,0 +1,10 @@
+__pycache__/
+__pycache__
+*.tar.gz
+*.whl
+dist/
+*.json
+*.cfg
+test/
+dist__/
+configmanager.egg-info/
