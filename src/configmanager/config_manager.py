@@ -142,20 +142,85 @@ class ConfigManager:
                 
                 # Save initial config
                 self._save_config_internal()
+
+    def _merge_defaults_with_existing(self, existing_data: Dict, defaults: Dict, force_add: bool = False) -> Dict:
+        """
+        Merge default values with existing configuration, preserving existing values.
+        Only adds keys that don't exist in the existing configuration.
+        
+        Args:
+            existing_data: Current configuration data
+            defaults: Default values to merge
+            
+        Returns:
+            Merged configuration data
+        """
+        merged = existing_data.copy()
+
+        for key, value in defaults.items():
+            if force_add:
+                if key not in merged:
+                    merged[key] = value
+            elif not isinstance(value, dict):
+                if key not in merged['general']:
+                    merged['general'][key] = value
+            else:
+                if key not in merged:
+                    merged[key] = {}
+                merged[key] = self._merge_defaults_with_existing(merged[key], value, force_add=True)
+        return merged
     
     def create_or_load_config(self, file_path: Union[str, Path], initial_data: Dict = None, auto_save: bool = True) -> None:
         """
-        Load config if file exists, otherwise create it with initial data. Thread-safe.
+        Load config if file exists, otherwise create it with initial data. 
+        If file exists, merge defaults with existing data (only add missing keys). Thread-safe.
         This is the method used internally by __init__.
         
         Args:
             file_path: Path to the configuration file
-            initial_data: Initial configuration data (used only if file doesn't exist)  
+            initial_data: Initial configuration data (used as defaults)  
             auto_save: Whether to automatically save changes to file
         """
         file_path = Path(file_path)
+        initial_data = initial_data or {}
 
-        self.create_config(file_path, initial_data, auto_save, force=True)
+        with self._file_lock:  # Ensure only one thread does file I/O at a time
+            with self._data_lock:  # Ensure data consistency
+                # If this is switching to a new file, warn user
+                if self._config_file_path and self._config_file_path != file_path:
+                    print(f"Warning: Switching from {self._config_file_path} to {file_path}")
+                
+                self._config_file_path = file_path
+                self._auto_save = auto_save
+                
+                # Determine file type by extension
+                extension = file_path.suffix.lower()
+                if extension == '.json':
+                    self._file_type = 'json'
+                elif extension in ['.cfg', '.ini']:
+                    self._file_type = 'cfg'
+                else:
+                    raise ValueError(f"Unsupported file type: {extension}. Supported types: .json, .cfg, .ini")
+                
+                # Create directory if it doesn't exist
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                if file_path.exists():
+                    # File exists, load existing data
+                    if self._file_type == 'json':
+                        self._load_json()
+                    elif self._file_type == 'cfg':
+                        self._load_cfg()
+                    
+                    # Merge defaults with existing data (only add missing keys)
+                    if initial_data:
+                        self._config_data = self._merge_defaults_with_existing(self._config_data, initial_data)
+                        if self._auto_save:
+                            self._save_config_internal()
+                else:
+                    # File doesn't exist, create with initial data
+                    self._config_data = initial_data.copy()
+                    self._save_config_internal()
     
     def _load_json(self) -> None:
         """Load configuration from JSON file."""
@@ -196,12 +261,16 @@ class ConfigManager:
         """Save configuration to CFG/INI file."""
         parser = configparser.ConfigParser()
         
-        parser.add_section('general')
+        # Add sections and keys
         for section_name, section_data in self._config_data.items():
             if not isinstance(section_data, dict):
+                # If there's no 'general' section, create it
+                if not parser.has_section('general'):
+                    parser.add_section('general')
                 parser.set('general', section_name, str(section_data))
             else:
-                parser.add_section(section_name)
+                if not parser.has_section(section_name):
+                    parser.add_section(section_name)
                 for key, value in section_data.items():
                     parser.set(section_name, key, str(value))
         
