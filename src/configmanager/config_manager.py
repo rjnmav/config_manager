@@ -159,13 +159,13 @@ class ConfigManager:
 
         for key, value in defaults.items():
             if force_add:
-                if key not in merged:
+                if key.lower() not in merged:
                     merged[key] = value
             elif not isinstance(value, dict):
-                if key not in merged['general']:
+                if key.lower() not in merged['general']:
                     merged['general'][key] = value
             else:
-                if key not in merged:
+                if key.lower() not in merged:
                     merged[key] = {}
                 merged[key] = self._merge_defaults_with_existing(merged[key], value, force_add=True)
         return merged
