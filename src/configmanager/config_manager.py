@@ -147,27 +147,46 @@ class ConfigManager:
         """
         Merge default values with existing configuration, preserving existing values.
         Only adds keys that don't exist in the existing configuration.
+        Uses case-insensitive key matching.
         
         Args:
             existing_data: Current configuration data
             defaults: Default values to merge
+            force_add: If True, add directly to existing_data; if False, add to 'general' section
             
         Returns:
             Merged configuration data
         """
         merged = existing_data.copy()
 
+        def key_exists_case_insensitive(target_dict, key):
+            """Check if a key exists in dictionary (case-insensitive)"""
+            key_lower = key.lower()
+            return any(existing_key.lower() == key_lower for existing_key in target_dict.keys())
+
         for key, value in defaults.items():
             if force_add:
-                if key.lower() not in merged:
-                    merged[key] = value
+                # Direct addition to current level
+                if not key_exists_case_insensitive(merged, key):
+                    merged[key.lower()] = value
             elif not isinstance(value, dict):
-                if key.lower() not in merged['general']:
-                    merged['general'][key] = value
+                # Non-dict values go to 'general' section
+                if 'general' not in merged:
+                    merged['general'] = {}
+                if not key_exists_case_insensitive(merged['general'], key):
+                    merged['general'][key.lower()] = value
             else:
-                if key.lower() not in merged:
-                    merged[key] = {}
-                merged[key] = self._merge_defaults_with_existing(merged[key], value, force_add=True)
+                # Dict values become sections
+                section_key_lower = key.lower()
+                if not key_exists_case_insensitive(merged, key):
+                    merged[section_key_lower] = {}
+                # Find the actual key (might be different case)
+                actual_section_key = section_key_lower
+                for existing_key in merged.keys():
+                    if existing_key.lower() == section_key_lower:
+                        actual_section_key = existing_key
+                        break
+                merged[actual_section_key] = self._merge_defaults_with_existing(merged[actual_section_key], value, force_add=True)
         return merged
     
     def create_or_load_config(self, file_path: Union[str, Path], initial_data: Dict = None, auto_save: bool = True) -> None:
@@ -230,6 +249,8 @@ class ConfigManager:
     def _load_cfg(self) -> None:
         """Load configuration from CFG/INI file."""
         parser = configparser.ConfigParser()
+        # Preserve case of option names (keys)
+        parser.optionxform = str
         parser.read(self._config_file_path, encoding='utf-8')
         
         # Convert ConfigParser to dictionary
@@ -260,6 +281,8 @@ class ConfigManager:
     def _save_cfg(self) -> None:
         """Save configuration to CFG/INI file."""
         parser = configparser.ConfigParser()
+        # Preserve case of option names (keys)
+        parser.optionxform = str
         
         # Add sections and keys
         for section_name, section_data in self._config_data.items():
@@ -277,9 +300,10 @@ class ConfigManager:
         with open(self._config_file_path, 'w', encoding='utf-8') as f:
             parser.write(f)
     
-    def get(self, key: str, default: Any = None, section: str = None, type: Type = None) -> Any:
+    def get(self, key: str, default: Any = None, section: str = None, type_chnage: Type = None) -> Any:
         """
         Get a configuration value. Thread-safe.
+        Uses case-insensitive key matching.
 
         Args:
             key: Configuration key
@@ -296,52 +320,92 @@ class ConfigManager:
             # Validate that _config_data is usable
             if not isinstance(data, dict):
                 return default
+            
+            def str_to_bool(s: str) -> bool:
+                s = s.strip().lower()
+                if s in ("true", "1", "yes", "y", "t"):
+                    return True
+                elif s in ("false", "0", "no", "n", "f"):
+                    return False
+                else:
+                    raise ValueError(f"Can't convert {s!r} to bool")
 
             # Helper for safe type conversion
             def convert(value):
-                if type is None or value is None:
+                if type_chnage is None or value is None:
                     return value
-                if not callable(type):
-                    raise TypeError(f"Provided type '{type}' is not callable")
+                if not callable(type_chnage):
+                    raise TypeError(f"Provided type '{type_chnage}' is not callable")
                 try:
-                    return type(value)
+                    if type_chnage == bool and isinstance(value, str):
+                        return str_to_bool(value)
+                    return type_chnage(value)
                 except (ValueError, TypeError):
                     raise ValueError(
-                        f"Cannot convert value '{value}' for key '{key}' to type {getattr(type, '__name__', str(type))}"
+                        f"Cannot convert value '{value}' for key '{key}' to type {getattr(type_chnage, '__name__', str(type_chnage))}"
                     )
+
+            # Helper for case-insensitive key lookup
+            def get_key_case_insensitive(target_dict, search_key):
+                """Get value from dict using case-insensitive key matching"""
+                if not isinstance(target_dict, dict):
+                    return None
+                search_key_lower = search_key.lower()
+                for dict_key, dict_value in target_dict.items():
+                    if dict_key.lower() == search_key_lower:
+                        return dict_value
+                return None
 
             # ---------- CFG with section ----------
             if self._file_type == 'cfg' and section:
                 if not isinstance(section, str):
                     return default
-                value = data.get(section, {}).get(key, default)
+                section_data = get_key_case_insensitive(data, section)
+                if section_data is None:
+                    return default
+                value = get_key_case_insensitive(section_data, key)
+                if value is None:
+                    return default
                 return convert(value)
 
             # ---------- CFG without section ----------
             if self._file_type == 'cfg' and not section:
-                # Check top-level key
-                if key in data:
-                    return convert(data[key])
+                # Check top-level key (case-insensitive)
+                value = get_key_case_insensitive(data, key)
+                if value is not None:
+                    return convert(value)
                 # Search inside section dictionaries
                 for sec, sec_data in data.items():
-                    if isinstance(sec_data, dict) and key in sec_data:
-                        return convert(sec_data[key])
+                    if isinstance(sec_data, dict):
+                        value = get_key_case_insensitive(sec_data, key)
+                        if value is not None:
+                            return convert(value)
                 return default
 
             # ---------- JSON or other formats ----------
             try:
                 if section:
-                    section_data = data if section == 'general' else data.get(section, {})
-                    value = section_data.get(key, default)
+                    if section == 'general':
+                        section_data = data
+                    else:
+                        section_data = get_key_case_insensitive(data, section)
+                    if section_data is None:
+                        return default
+                    value = get_key_case_insensitive(section_data, key)
+                    if value is None:
+                        return default
                     return convert(value)
                 else:
-                    # First check top-level key
-                    if key in data:
-                        return convert(data[key])
+                    # First check top-level key (case-insensitive)
+                    value = get_key_case_insensitive(data, key)
+                    if value is not None:
+                        return convert(value)
                     # Search inside section dictionaries
                     for sec_data in data.values():
-                        if isinstance(sec_data, dict) and key in sec_data:
-                            return convert(sec_data[key])
+                        if isinstance(sec_data, dict):
+                            value = get_key_case_insensitive(sec_data, key)
+                            if value is not None:
+                                return convert(value)
                     return default
             except (KeyError, TypeError, AttributeError):
                 return default
@@ -385,6 +449,7 @@ class ConfigManager:
     def has(self, key: str, section: str = None) -> bool:
         """
         Check if a configuration key exists. Thread-safe.
+        Uses case-insensitive key matching.
         
         Args:
             key: Configuration key
@@ -393,13 +458,30 @@ class ConfigManager:
         Returns:
             True if key exists, False otherwise
         """
+        # Helper for case-insensitive key lookup
+        def key_exists_case_insensitive(target_dict, search_key):
+            """Check if a key exists in dictionary (case-insensitive)"""
+            if not isinstance(target_dict, dict):
+                return False
+            search_key_lower = search_key.lower()
+            return any(existing_key.lower() == search_key_lower for existing_key in target_dict.keys())
+
         with self._data_lock:
             if self._file_type == 'cfg' and section:
-                return section in self._config_data and key in self._config_data[section]
+                section_exists = key_exists_case_insensitive(self._config_data, section)
+                if not section_exists:
+                    return False
+                # Find the actual section key
+                actual_section_key = None
+                for existing_key in self._config_data.keys():
+                    if existing_key.lower() == section.lower():
+                        actual_section_key = existing_key
+                        break
+                return key_exists_case_insensitive(self._config_data[actual_section_key], key)
             elif self._file_type == 'cfg' and not section:
                 # Search in all sections
                 for section_data in self._config_data.values():
-                    if key in section_data:
+                    if key_exists_case_insensitive(section_data, key):
                         return True
                 return False
             else:
@@ -407,9 +489,18 @@ class ConfigManager:
                 keys = key.split('.')
                 value = self._config_data
                 try:
-                    for k in keys:
-                        value = value[k]
-                    return True
+                    for k in keys[:-1]:
+                        # Case-insensitive navigation
+                        found_key = None
+                        for existing_key in value.keys():
+                            if existing_key.lower() == k.lower():
+                                found_key = existing_key
+                                break
+                        if found_key is None:
+                            return False
+                        value = value[found_key]
+                    # Check final key case-insensitively
+                    return key_exists_case_insensitive(value, keys[-1])
                 except (KeyError, TypeError):
                     return False
     

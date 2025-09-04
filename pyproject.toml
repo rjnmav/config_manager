@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configmanager"
-version = "1.1.1"
+version = "1.2.0"
 description = "A fully thread-safe configuration manager for JSON and CFG files."
 readme = "README.md"
 authors = [
