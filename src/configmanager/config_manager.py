@@ -299,8 +299,8 @@ class ConfigManager:
         
         with open(self._config_file_path, 'w', encoding='utf-8') as f:
             parser.write(f)
-    
-    def get(self, key: str, default: Any = None, section: str = None, type_chnage: Type = None) -> Any:
+
+    def get(self, key: str, default: Any = None, section: str = None, type_change: Type = None) -> Any:
         """
         Get a configuration value. Thread-safe.
         Uses case-insensitive key matching.
@@ -332,17 +332,17 @@ class ConfigManager:
 
             # Helper for safe type conversion
             def convert(value):
-                if type_chnage is None or value is None:
+                if type_change is None or value is None:
                     return value
-                if not callable(type_chnage):
-                    raise TypeError(f"Provided type '{type_chnage}' is not callable")
+                if not callable(type_change):
+                    raise TypeError(f"Provided type '{type_change}' is not callable")
                 try:
-                    if type_chnage == bool and isinstance(value, str):
+                    if type_change == bool and isinstance(value, str):
                         return str_to_bool(value)
-                    return type_chnage(value)
+                    return type_change(value)
                 except (ValueError, TypeError):
                     raise ValueError(
-                        f"Cannot convert value '{value}' for key '{key}' to type {getattr(type_chnage, '__name__', str(type_chnage))}"
+                        f"Cannot convert value '{value}' for key '{key}' to type {getattr(type_change, '__name__', str(type_change))}"
                     )
 
             # Helper for case-insensitive key lookup
